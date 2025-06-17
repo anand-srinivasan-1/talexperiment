@@ -28,17 +28,23 @@ private:
     std::vector<std::pair<uint32_t, uint32_t> > fields;
     uint32_t size;
 
+    /* load and store instructions use 12 bit offsets */
+    static constexpr uint32_t MAX_SIZE_BYTES = 2048;
+
 public:
 
     ClassDesc(ClassDesc& _superclass) :
         id{serial},
         done{false},
-        superclass{&_superclass},
-        size{4}
+        superclass{&_superclass}
     {
         if(serial >= MAX_CLASS_ID) {
             throw std::runtime_error{"too many classes loaded"};
         }
+        for(auto field : superclass->fields) {
+            fields.push_back(field);
+        }
+        size = superclass->size;
         serial++;
     }
 
@@ -63,7 +69,7 @@ public:
     }
 
     void addfield(uint32_t arraydepth, unsigned int typ) {
-        if(typ < 0 || typ > 3) {
+        if(typ > 3) {
             throw std::runtime_error{"illegal primitive type"};
         }
         if(arraydepth >= 4096) {
@@ -88,12 +94,36 @@ public:
         return id;
     }
 
+    uint32_t sizebytes() {
+        return size;
+    }
+
     void finish() {
+        if(size >= MAX_SIZE_BYTES) {
+            throw std::runtime_error{"object over maximum size"};
+        }
         done = true;
     }
 
     bool is_finished() {
         return done;
+    }
+
+    uint32_t fieldtype(unsigned int field) {
+        return fields.at(field).second; // fields are (offset, type)
+    }
+
+    uint32_t fieldsize(unsigned int field) {
+        switch(fieldtype(field)) {
+            case 0: return 1;
+            case 1: return 2;
+            case 2: return 4;
+            default: return 8;
+        }
+    }
+
+    uint32_t fieldoffset(unsigned int field) {
+        return fields.at(field).first; // fields are (offset, type)
     }
 };
 
@@ -111,8 +141,9 @@ private:
 
     unsigned int frameslots; /* in 64 bit words */
     bool usex5ret; /* leaf functions can use x5 as return address */
+    uint32_t returntype;
     std::vector<uint32_t> code;
-    std::vector<uint32_t> typestate; /* first 32 for registers */
+    std::vector<uint32_t> typestate; /* first 32 entries for registers */
 
     //TODO: std::map<> jumptargets;
     //TODO: std::map<> jumps;
@@ -177,12 +208,16 @@ private:
 
 public:
 
-    RV64Function(unsigned int _frameslots, bool _usex5ret) :
+    RV64Function(unsigned int _frameslots, bool _usex5ret, std::vector<uint32_t> params, uint32_t _returntype) :
         frameslots{_frameslots},
-        usex5ret{_usex5ret}
+        usex5ret{_usex5ret},
+        returntype{_returntype}
     {
         if(frameslots > MAXFRAMESLOTS) {
             throw std::runtime_error{"exceeded maximum frame size"};
+        }
+        if(params.size() > 8) {
+            throw std::runtime_error{"exceeded maximum parameter count"};
         }
         for(int i = 0; i <= 4; i++) {
             // anything under 32 is an integer
@@ -194,6 +229,10 @@ public:
         for(int i = 0; i < frameslots; i++) {
             // frame slots start as unknown integers
             typestate.push_back(4);
+        }
+        for(int i = 0; i < params.size(); i++) {
+            /* argument registers a0 to a7 are x10 to x17 */
+            writeregtype(10 + i, params.at(i));
         }
     }
 
@@ -214,7 +253,45 @@ public:
         return offset;
     }
 
-    // TODO: spill_reg, unspill_reg, load_field, store_field, arrays
+    // TODO: arrays
+
+    //void spill_reg(...) { ... }
+
+    //void unspill_reg(...) { ... }
+
+    void load_field(uint32_t rd, uint32_t rptr, ClassDesc& cls, unsigned int field) {
+        if(!cls.is_finished()) {
+            throw std::runtime_error{"class is not finished"};
+        }
+        if(readregtype(rptr) != cls.gettypeid()) {
+            throw std::runtime_error{"pointer has wrong type"};
+        }
+        uint32_t desttype = cls.fieldtype(field);
+        uint32_t destsize = cls.fieldsize(field);
+        uint32_t offset = cls.fieldoffset(field);
+        writeregtype(rd, desttype);
+        write32((offset << 20) | (rptr << 15) | (destsize << 12) | (rd << 7) | 3);
+    }
+
+    void store_field(uint32_t rptr, uint32_t rs, ClassDesc& cls, unsigned int field) {
+        if(!cls.is_finished()) {
+            throw std::runtime_error{"class is not finished"};
+        }
+        uint32_t desttype = cls.fieldtype(field);
+        uint32_t destsize = cls.fieldsize(field);
+        uint32_t offset = cls.fieldoffset(field);
+        if(readregtype(rs) != desttype && desttype >= 32) {
+            /* if desttype is a primitive then we don't care about
+            the pointer value - only coining a new pointer is illegal */
+            throw std::runtime_error{"value incompatible with field type"};
+        }
+        if(readregtype(rptr) != cls.gettypeid()) {
+            throw std::runtime_error{"pointer has wrong type"};
+        }
+        uint32_t offset_11_5 = (offset >> 5) & 127;
+        uint32_t offset_4_0 = offset & 31;
+        write32((offset_11_5 << 25) | (rs << 20) | (rptr << 15) | (destsize << 12) | (offset_4_0 << 7) | 35);
+    }
 
     // nop and move are pseudoinstructions
 
@@ -222,13 +299,13 @@ public:
         addi(0, 0, 0);
     }
 
-    void move(int rd, int rs) {
+    void move(uint32_t rd, uint32_t rs) {
         writeregtype(rd, readregtype(rs));
         // move is a special case, to preserve pointer and singleton types
         write32((rs << 15) | (rd << 7) | 19); // addi rd, rs, 0
     }
 
-    void lui(int rd, uint32_t imm20) {
+    void lui(uint32_t rd, uint32_t imm20) {
         utype(imm20, rd, 55);
     }
 
