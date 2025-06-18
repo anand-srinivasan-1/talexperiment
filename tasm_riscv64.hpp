@@ -1,3 +1,4 @@
+#include <iostream>
 #include <fstream>
 
 #include <optional>
@@ -137,11 +138,14 @@ private:
     /* x8, x9, x18 to x27 are callee save */
     static constexpr uint32_t SAVEMASK = 0x0FFC0300;
 
-    static constexpr unsigned int MAXFRAMESLOTS = 255;
+    /* end of frame reserved for return address,
+    frame must take less than 2048 bytes */
+    static constexpr unsigned int MAXFRAMESLOTS = 254;
 
     unsigned int frameslots; /* in 64 bit words */
     bool usex5ret; /* leaf functions can use x5 as return address */
     uint32_t returntype;
+    bool frame_open;
     std::vector<uint32_t> code;
     std::vector<uint32_t> typestate; /* first 32 entries for registers */
 
@@ -197,6 +201,16 @@ private:
         write32((imm20 << 12) | (rd << 7) | opcode);
     }
 
+    void write_load_inst(uint32_t size, uint32_t rd, uint32_t rptr, uint32_t offset) {
+        write32((offset << 20) | (rptr << 15) | (size << 12) | (rd << 7) | 3);
+    }
+
+    void write_store_inst(uint32_t size, uint32_t rptr, uint32_t offset, uint32_t rs) {
+        uint32_t offset_11_5 = (offset >> 5) & 0b1111111;
+        uint32_t offset_4_0 = offset & 0b11111;
+        write32((offset_11_5 << 25) | (rs << 20) | (rptr << 15) | (size << 12) | (offset_4_0 << 7) | 35);
+    }
+
     /* expects offset in bytes */
     void branch(uint32_t target, uint32_t rs2, uint32_t rs1, uint32_t cond) {
         // TODO: check target range
@@ -211,7 +225,8 @@ public:
     RV64Function(unsigned int _frameslots, bool _usex5ret, std::vector<uint32_t> params, uint32_t _returntype) :
         frameslots{_frameslots},
         usex5ret{_usex5ret},
-        returntype{_returntype}
+        returntype{_returntype},
+        frame_open{false}
     {
         if(frameslots > MAXFRAMESLOTS) {
             throw std::runtime_error{"exceeded maximum frame size"};
@@ -253,11 +268,40 @@ public:
         return offset;
     }
 
+    void open_frame() {
+        if(frame_open) {
+            throw std::runtime_error{"frame is already open"};
+        }
+        frame_open = true;
+        // some number of 64 bit words, then return address
+        uint32_t slot_bytes = frameslots * 8;
+        uint32_t frame_bytes = slot_bytes + 8;
+        write32((-frame_bytes << 20) | 0x10113); // addi sp, sp, -frame_bytes
+        write_store_inst(3, 2, slot_bytes, 1); // sd slot_bytes(sp), ra
+    }
+
+    void close_frame() {
+        if(!frame_open) {
+            throw std::runtime_error{"frame is not open"};
+        }
+        frame_open = false;
+        uint32_t slot_bytes = frameslots * 8;
+        uint32_t frame_bytes = slot_bytes + 8;
+        write_load_inst(3, 1, 2, slot_bytes); // ld ra, slot_bytes(sp)
+        write32((frame_bytes << 20) | 0x10113); // addi sp, sp, frame_bytes
+    }
+
     // TODO: arrays
 
-    //void spill_reg(...) { ... }
+    void spill_reg(uint32_t slot, uint32_t rs) {
+        typestate.at(32 + slot) = readregtype(rs);
+        write_store_inst(3, 2, slot * 8, rs); // sd offset(sp), rs
+    }
 
-    //void unspill_reg(...) { ... }
+    void unspill_reg(uint32_t rd, uint32_t slot) {
+        writeregtype(rd, typestate.at(32 + slot));
+        write_load_inst(3, rd, 2, slot * 8); // ld rd, offset(sp)
+    }
 
     void load_field(uint32_t rd, uint32_t rptr, ClassDesc& cls, unsigned int field) {
         if(!cls.is_finished()) {
@@ -270,7 +314,7 @@ public:
         uint32_t destsize = cls.fieldsize(field);
         uint32_t offset = cls.fieldoffset(field);
         writeregtype(rd, desttype);
-        write32((offset << 20) | (rptr << 15) | (destsize << 12) | (rd << 7) | 3);
+        write_load_inst(destsize, rd, rptr, offset);
     }
 
     void store_field(uint32_t rptr, uint32_t rs, ClassDesc& cls, unsigned int field) {
@@ -290,7 +334,7 @@ public:
         }
         uint32_t offset_11_5 = (offset >> 5) & 127;
         uint32_t offset_4_0 = offset & 31;
-        write32((offset_11_5 << 25) | (rs << 20) | (rptr << 15) | (destsize << 12) | (offset_4_0 << 7) | 35);
+        write_store_inst(destsize, rptr, offset, rs);
     }
 
     // nop and move are pseudoinstructions
