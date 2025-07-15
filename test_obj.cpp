@@ -24,7 +24,7 @@ int main(int argc, char **argv) {
     c2.finish();
     assert(c2.sizebytes() == 20);
     std::vector args{c1.gettypeid(), c2.gettypeid()};
-    RV64Function f{100, false, args, 4};
+    RV64Function f{100, args, 4};
     _ open_frame();
     _ load_field(15, 10, c1, 1); // field 1: short
     _ store_field(11, 15, c2, 4); // field 4: long

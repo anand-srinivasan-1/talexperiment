@@ -11,7 +11,8 @@ int main(int argc, const char **argv) {
         std::cout << "expected file argument\n";
         return 1;
     }
-    RV64Function f{0, false};
+    std::vector<uint32_t> args;
+    RV64Function f{0, args, 4};
     _ nop();
     _ move(5, 6);
     _ lui(5, -100000);

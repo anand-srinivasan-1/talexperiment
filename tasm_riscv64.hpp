@@ -143,7 +143,6 @@ private:
     static constexpr unsigned int MAXFRAMESLOTS = 254;
 
     unsigned int frameslots; /* in 64 bit words */
-    bool usex5ret; /* leaf functions can use x5 as return address */
     uint32_t returntype;
     bool frame_open;
     std::vector<uint32_t> code;
@@ -222,9 +221,8 @@ private:
 
 public:
 
-    RV64Function(unsigned int _frameslots, bool _usex5ret, std::vector<uint32_t> params, uint32_t _returntype) :
+    RV64Function(unsigned int _frameslots, std::vector<uint32_t> params, uint32_t _returntype) :
         frameslots{_frameslots},
-        usex5ret{_usex5ret},
         returntype{_returntype},
         frame_open{false}
     {
@@ -268,6 +266,13 @@ public:
         return offset;
     }
 
+    void demoteclass(uint32_t r, ClassDesc& oldtype, ClassDesc& newtype) {
+        if(!oldtype.is_a(newtype)) {
+            throw std::runtime_error{"illegal type demotion"};
+        }
+        writeregtype(r, (readregtype(r) & 0xFFF00000) | newtype.gettypeid());
+    }
+
     void open_frame() {
         if(frame_open) {
             throw std::runtime_error{"frame is already open"};
@@ -291,7 +296,63 @@ public:
         write32((frame_bytes << 20) | 0x10113); // addi sp, sp, frame_bytes
     }
 
-    // TODO: arrays
+    void array_length(uint32_t rd, uint32_t rs) {
+        if((readregtype(rs) >> 20) == 0) {
+            throw std::runtime_error{"expected array type"};
+        }
+        writeregtype(rd, 4);
+        // first 4 bytes in array are signed length field, like Java
+        // first 8 bytes in array are reserved for header
+        write_load_inst(2, rd, rs, 0); // lw rd, (rs)
+    }
+
+    void array_get(uint32_t rd, uint32_t rptr, uint32_t ri) {
+        if(readregtype(ri) >= 32) {
+            throw std::runtime_error{"index must be integer type"};
+        }
+        uint32_t rptype = readregtype(rptr);
+        if((rptype >> 20) == 0) {
+            throw std::runtime_error{"expected array type"};
+        }
+        uint32_t basetype = rptype & 0xFFFFF;
+        uint32_t member_adepth = (rptype >> 20) - 1;
+        uint32_t logsize = std::max(basetype, 3u);
+        if(member_adepth > 0) {
+            logsize = 3; // all pointers are 8 bytes
+        }
+        write_load_inst(2, rd, rptr, 0); // lw rd, (rptr)
+        write32(0x6463 | (ri << 15) | (rd << 20)); // bltu ri, rd, +8 bytes
+        write32(0); // illegal instruction
+        write32(0x1013 | (rd << 7) | (ri << 15) | (logsize << 20)); // slli rd, ri, log2(size)
+        write_load_inst(logsize, rd, rd, 8); // load <size> rd, [rd + 8]
+        writeregtype(rd, (member_adepth << 20) | basetype);
+    }
+
+    void array_put(uint32_t rptr, uint32_t ri, uint32_t rs, uint32_t rtmp) {
+        if(readregtype(ri) >= 32) {
+            throw std::runtime_error{"index must be integer type"};
+        }
+        uint32_t rptype = readregtype(rptr);
+        if((rptype >> 20) == 0) {
+            throw std::runtime_error{"expected array type"};
+        }
+        if(rptype - (1 << 20) != readregtype(rs)) {
+            throw std::runtime_error{"data type does not fit in array"};
+        }
+        uint32_t basetype = rptype & 0xFFFFF;
+        uint32_t member_adepth = (rptype >> 20) - 1;
+        uint32_t logsize = std::max(basetype, 3u);
+        if(member_adepth > 0) {
+            logsize = 3; // all pointers are 8 bytes
+        }
+        writeregtype(rtmp, 4);
+        uint32_t rt = rtmp;
+        write_load_inst(2, rt, rptr, 0); // lw rt, (rptr)
+        write32(0x6463 | (ri << 15) | (rt << 20)); // bltu ri, rt, +8 bytes
+        write32(0); // illegal instruction
+        write32(0x1013 | (rt << 7) | (ri << 15) | (logsize << 20)); // slli rt, ri, log2(size)
+        write_store_inst(logsize, rt, 8, rs); // store <size> [rt + 8], rt
+    }
 
     void spill_reg(uint32_t slot, uint32_t rs) {
         typestate.at(32 + slot) = readregtype(rs);
