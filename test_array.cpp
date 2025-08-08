@@ -18,7 +18,7 @@ int main(int argc, char **argv) {
     _ array_length(5, 10);
     _ array_get(6, 10, 11);
     _ array_put(10, 11, 6, 7);
-    //_ ret();
+    _ ret();
     f.dumptofile(argv[1]);
     return 0;
 }

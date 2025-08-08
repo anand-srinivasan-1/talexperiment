@@ -414,7 +414,11 @@ public:
         utype(imm20, rd, 55);
     }
 
-    // call (disabled if returning to x5), jump, ret (must check return type, callee save)
+    // TODO: call (disabled if returning to x5), jump, ret (must check return type, callee save)
+
+    void ret() {
+        ...
+    }
 
     void beq(uint32_t rs1, uint32_t rs2, uint32_t target) {
         branch(target, rs2, rs1, 0);

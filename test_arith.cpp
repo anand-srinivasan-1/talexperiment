@@ -43,7 +43,7 @@ int main(int argc, const char **argv) {
     _ divu(5, 6, 7);
     _ rem(5, 6, 7);
     _ remu(5, 6, 7);
-    //_ ret(); // no need to undo stack frame
+    _ ret(); // no need to undo stack frame
     f.dumptofile(argv[1]);
     return 0;
 }

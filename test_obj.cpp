@@ -33,7 +33,7 @@ int main(int argc, char **argv) {
     _ unspill_reg(17, 70);
     _ store_field(11, 17, c2, 0); // field 0: int
     _ close_frame();
-    //_ ret(); // no need to undo stack frame
+    _ ret();
     f.dumptofile(argv[1]);
     return 0;
 }

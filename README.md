@@ -40,3 +40,4 @@ Primitive types are assigned numbers 0 to 3 in class fields, 4 is the default in
 - More or less standard calling convention for RISC-V
 - Object types with inheritance
 - Support for stack frames (without a frame pointer)
+- Array accessor macros
