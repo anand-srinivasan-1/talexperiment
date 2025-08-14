@@ -1,4 +1,4 @@
-This is an experiment to write a type-aware assembler for RISC-V. It aims to support fixed-point arithmetic, Java-style classes, arrays, all RISC-V control flow instructions, and a realistic calling convention.
+This is an experiment to write a type-aware assembler for RISC-V. It aims to support fixed-point arithmetic, Java-style classes, arrays, control flow, and a realistic calling convention.
 
 Raw binary files can be disassembled using `riscv64-linux-gnu-objdump -D -b binary -m riscv <file>`
 
@@ -41,3 +41,15 @@ Primitive types are assigned numbers 0 to 3 in class fields, 4 is the default in
 - Object types with inheritance
 - Support for stack frames (without a frame pointer)
 - Array accessor macros
+
+### What I learned
+
+All the details of a real instruction set make this more difficult. At least it's not x86, where addressing modes make things messier. RISC-V is simple as real world instruction sets go, but there are a few things that are obvious even from a simple experiment like this.
+
+The fundamental premise of the type system is distinguishing between an integer and a pointer. Pointers cannot be created by normal code, although converting a pointer to an integer is fine, and memory operations are restricted (for example, pointer arithmetic is forbidden or heavily restricted).
+
+The most important thing about deciding how pointers should work is picking an object model. The choice to use a Java-inspired model (garbage collected, no pointers to the middle of an object) makes some things much simpler, since the original x86 typed assembly papers had to deal with `malloc` and `free` and keeping track of manual memory management operators. This object model may be the simplest practical model, since Java more or less uses it. Array support is a bit of a wrinkle - this experiment uses the same approach as Morrisett et al. where certain macros are provided for array reads and writes. A real world typed assembler might potentially use dependent types as mentioned in later typed assembly work done by different people, since dependent types allow the assembler to express a proof that an array index or pointer is legal, so there is no need for a macro every time to access an array type.
+
+Practical use of formal methods is not known to be easy in general, but even a verifying (as opposed to verified) compiler pass like this is surprisingly messy to define. It is complicated enough for a simple ISA like RISC-V that Javascript JITs may be the few projects that justify the effort, since it is practical (but still very hard) to use formal methods to make a verifying compiler with a very limited set of properties verified. (In other words, proving equivalence of a pass's output to input is far harder than this!)
+
+That said, I imagine if people insist on using the JIT compiler on untrusted code, in the long run a technique like this may catch on.
