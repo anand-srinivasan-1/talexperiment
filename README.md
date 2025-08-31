@@ -1,4 +1,4 @@
-This is an experiment to write a type-aware assembler for RISC-V. It aims to support fixed-point arithmetic, Java-style classes, arrays, control flow, and a realistic calling convention.
+This is an experiment to devise a type-aware assembly language for RISC-V. It aims to support fixed-point arithmetic, Java-style classes, arrays, and a realistic calling convention.
 
 Raw binary files can be disassembled using `riscv64-linux-gnu-objdump -D -b binary -m riscv <file>`
 
@@ -53,3 +53,17 @@ The most important thing about deciding how pointers should work is picking an o
 Practical use of formal methods is not known to be easy in general, but even a verifying (as opposed to verified) compiler pass like this is surprisingly messy to define. It is complicated enough for a simple ISA like RISC-V that Javascript JITs may be the few projects that justify the effort, since it is practical (but still very hard) to use formal methods to make a verifying compiler with a very limited set of properties verified. (In other words, proving equivalence of a pass's output to input is far harder than this!)
 
 That said, I imagine if people insist on using the JIT compiler on untrusted code, in the long run a technique like this may catch on.
+
+### Lessons learned, part 2
+
+Garbage collection has taken off since the time of the original typed assembly language papers, which is why this experiment neglected the memory management issues mentioned in the original papers.
+
+On the other hand, the original papers did not deal with array bounds checking, although a practical system would have to use a more sophisticated approach than accessor macros that insert a bounds check before every access. In untyped assembly, the compiler uses static analysis of the ranges of possible values a variable may have, and then emits unchecked memory accesses. To fit this into typed assembly, the type system must be extended to include dependent types, or more specifically refinement types.
+
+Refinement typing works on the principle of starting with some type, for example `int`, and refining it to the subset of `int` values matching some predicate, for example `x: int where x >= 0`. This can include expressions involving other variables (`x: int where x > y`). The immediate next step up here would be static ranges (`x in range 0 to 99 inclusive`), or maybe something like (`x in range 0 to 99 and x < y`). Arbitrary predicates would probably be impractical to check, so a practical system would probably be restricted to various forms of range analysis.
+
+The other complication that makes this nontrivial is that arithmetic operators would need more complicated type rules. For example, comparing registers would need a system to keep track of when a register contains a given constant, so that `branch if r1 < r2` can see that `r2` contains the constant `100` and conclude that if the branch is taken `r1` is restricted to the range `INT_MIN to 99` and if not then `r1` is restricted to the range `100 to INT_MAX`. This alone may well be more complicated than the simple integer-and-pointer approach that avoids the bounds checking problem.
+
+The object system itself seems to need no extra work, since the Java virtual machine, for example, does not support sum types, and works just fine with a type system similar to this one, made of nothing other than primitives, classes which are internally implemented as structs, and pointers to instances of classes.
+
+I originally started this experiment to answer a question I had. I came across the concept of typed assembly language and wanted to see if there were any barriers to using it that would only be obvious after writing a toy assembler myself. After coming up with this type system, I believe that there is nothing that makes it impossible in principle, but that a practical system would take a considerable amount of work. Since RISC-V is already nontrivial, the messy addressing modes of x86 promise to make a real typed assembler even more complex. I also believe I am correct in concluding that Javascript's garbage collected semantics are a welcome development, since manual memory management would have made this project even more complex.
